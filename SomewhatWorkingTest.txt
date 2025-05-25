@@ -1,0 +1,846 @@
+import React, { useState, useEffect } from "react";
+import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
+import L from "leaflet";
+import { Dropbox } from "dropbox";
+import "leaflet/dist/leaflet.css";
+
+// Dropbox Configuration
+const DROPBOX_CONFIG = {
+  accessToken:
+    "sl.u.AFt8LLETa4yiwVwmHzxuYLkt8tE1MWcMLSki357lJVgHGHOvwudFkzprPOg2SEbtHZt1iY-IPC62fjdE9gsqlpTu914g-U-U3CM5g9zVRcO3w3_RWjzkQc2Mn1eFa7hEFPpjFGCHwqCTXccM5EggfFxYLyfIW5ssJOiZHEwi3ywDt2Ur25cI5YBRqLUravlCSooM-FMp5h5F56NKinMw6yBvMcywh3tjidXDmYTL7K0nlKG2q_UJJi5TLknZIj1BqdkygkpquZyZa9PvZGpls6Uu94Gfovr9EhEoZCdhQ4k9KrV7wRG145fS29ARnXTW4j3_Yn281HarfwcoqFxtwlJEFspANmVv054_V22EjZw_gqeUBC5-4CRkE_LMChIJgM7hPKPCMZPz3A66uN1_3JkW3QqJ7b_TKmI1NUtzN6YV07z3KtX9o6Y_uOkN2yhsWdqPuxqKXRV0AfYGnYlU-SaUEX-DlwPxxsUnjfBK7Fk1OR9vP5ED8Evn4isJXyaWRwVmtj4KAzeWroaeoMiTQLTCKDj_nONdQJzWID9QjLvOsS9ldbu_aioYKkhsLdQqtRzzqpqTqI0JKzkKJOhGg3eYpFY3G-wVzMzb0mdO5jGmfrBPWIfuFT5R8jLeB7PYyZ_e6DvIyiKOSFwQkFhHGh7TLf3KVi81oK7i3HpZeZV_EipxD6_KaVq7uwcMwmNmtGjuKA65W6QnaZCumOvP9URIjOKYqKBYBoivZRtskD7sIEOdK2kLVW7JfKg-4NAyUbC1JrhA085bVtn-dQEsJIGuvI3X4RU7tUvcjVQUtGrADB2vmV6KYHH8b7NruV9mzxLqtwy9yyPcohNqaUV6Iz3hNyvH_vuCZdpG0hRX_gtWpuK-pkYnIc7lSy56Zwpp66DMtuj15ygSthojWL62sshGmOqz0Tb_5LZoGyw2oH9lYPC0SDQN14BKG0PkHrSJrG3or0OWE0y2eosOj1_v_1cC15dkvbniqOhCUMhT9qGeCZiA9ZadKKQEjNW3ol-j982ZTM01Bddipb0XMwzTJg6hZyW3Dr4zyt-GsGCTWt1T_M07qHr_ng8TUIj2TLLkm8HIvE76T3cIkTane3oNdgHKm_59MxSFF6bV6iXAAicngICzzEaowXxOLzcEO1FJ9JY2iUjIehjEI-1XFJD7Jjex2JHavoOCwvCHRpPR47nhmu0z9Ac7qD2KL0YAJQaCwdlcSAKzRE5GNT_STCIXCCUtr3SyWF2bU34YUSwtCQkaF3cucqBbHc4MT7EBY4dLvuv7SGKpNrFTb1abarOit_h9T1i3yUgz-EKVZKjrzR4P9o_KqeYkYiUohiIW26W-UXki2vKrgvnehUCsxKagoGIQgDJG10x6PV3Is3kUUf9jmzmUyfevz4TnwGkmd4xtr1Mf-xPkv8n5vD15ThLkGSve",
+};
+
+// Location data with real coordinates - update these with your actual camera locations
+const MONITORING_LOCATIONS = [
+  {
+    id: 1,
+    name: "Honey Badger Trail",
+    coordinates: [-33.9249, 18.4241], // Cape Town area - replace with actual coordinates
+    dropboxPath: "/honey-badger",
+    frequency: "high", // This will be calculated based on actual sighting data
+    description: "Primary monitoring location for honey badger activity",
+  },
+  {
+    id: 2,
+    name: "River Crossing Point",
+    coordinates: [-33.935, 18.415], // Replace with actual coordinates
+    dropboxPath: "/location-2", // Replace with actual Dropbox folder
+    frequency: "medium",
+    description: "Secondary monitoring point near water source",
+  },
+  {
+    id: 3,
+    name: "Valley Perimeter",
+    coordinates: [-33.915, 18.435], // Replace with actual coordinates
+    dropboxPath: "/location-3", // Replace with actual Dropbox folder
+    frequency: "low",
+    description: "Outer perimeter monitoring station",
+  },
+];
+
+// Dropbox Service Class
+class DropboxService {
+  constructor() {
+    // Custom fetch function to route through proxy (same as your original code)
+    this.customFetch = async (url, options) => {
+      const proxyUrl = url.replace("https://api.dropboxapi.com", "/dropbox");
+      const proxyContentUrl = url.replace(
+        "https://content.dropboxapi.com",
+        "/content"
+      );
+      const finalUrl = proxyUrl.startsWith("/dropbox")
+        ? proxyUrl
+        : proxyContentUrl;
+
+      console.log("Fetching:", finalUrl);
+      return fetch(finalUrl, options);
+    };
+
+    // Initialize Dropbox client
+    this.dbx = new Dropbox({
+      accessToken: DROPBOX_CONFIG.accessToken,
+      fetch: this.customFetch,
+    });
+  }
+
+  async getLocationImages(dropboxPath, maxImages = 10, daysBack = 7) {
+    try {
+      console.log(`Fetching images from ${dropboxPath}...`);
+
+      // List files in the specified folder
+      const response = await this.dbx.filesListFolder({ path: dropboxPath });
+      const files = response.result.entries;
+
+      console.log(`Found ${files.length} files in ${dropboxPath}:`, files);
+
+      // Filter for image files
+      const imageFiles = files.filter((file) =>
+        file.name.match(/\.(jpg|jpeg|png|gif)$/i)
+      );
+
+      // Filter by date range
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - daysBack);
+
+      const recentImages = imageFiles.filter((file) => {
+        const fileDate = new Date(file.server_modified);
+        return fileDate >= cutoffDate;
+      });
+
+      // Sort by most recent first
+      const sortedImages = recentImages.sort((a, b) => {
+        return new Date(b.server_modified) - new Date(a.server_modified);
+      });
+
+      // Limit to requested number
+      const limitedImages = sortedImages.slice(0, maxImages);
+
+      console.log(`Processing ${limitedImages.length} recent images...`);
+
+      // Get temporary links for each image
+      const imageUrls = await Promise.all(
+        limitedImages.map(async (file) => {
+          try {
+            const linkResponse = await this.dbx.filesGetTemporaryLink({
+              path: file.path_lower,
+            });
+            return {
+              id: file.id,
+              name: file.name,
+              url: linkResponse.result.link,
+              path: file.path_lower,
+              modified: new Date(file.server_modified),
+              size: file.size,
+            };
+          } catch (linkError) {
+            console.error(`Failed to get link for ${file.name}:`, linkError);
+            return null;
+          }
+        })
+      );
+
+      // Filter out failed links
+      const validImages = imageUrls.filter((img) => img !== null);
+
+      console.log(`Successfully processed ${validImages.length} images`);
+      return validImages;
+    } catch (error) {
+      console.error(`Error fetching images from ${dropboxPath}:`, error);
+      throw new Error(
+        `Failed to load images from ${dropboxPath}: ${error.message}`
+      );
+    }
+  }
+
+  async checkFolderExists(dropboxPath) {
+    try {
+      await this.dbx.filesGetMetadata({ path: dropboxPath });
+      return true;
+    } catch (error) {
+      console.log(`Folder ${dropboxPath} not accessible:`, error.message);
+      return false;
+    }
+  }
+}
+
+// Create custom markers for different frequency levels
+const createCustomIcon = (frequency) => {
+  const color =
+    frequency === "high"
+      ? "#ef4444"
+      : frequency === "medium"
+      ? "#f59e0b"
+      : "#10b981";
+
+  return L.divIcon({
+    html: `
+      <div style="
+        background-color: ${color};
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        border: 3px solid white;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 12px;
+        font-weight: bold;
+      ">
+        📷
+      </div>
+    `,
+    className: "custom-marker",
+    iconSize: [24, 24],
+    iconAnchor: [12, 24],
+  });
+};
+
+// Image Gallery Component
+const ImageGallery = ({ location, onClose }) => {
+  const [images, setImages] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [imageCount, setImageCount] = useState(10);
+  const [dateRange, setDateRange] = useState(7);
+  const [dropboxService] = useState(() => new DropboxService());
+
+  const fetchImages = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      // Check if folder exists first
+      const folderExists = await dropboxService.checkFolderExists(
+        location.dropboxPath
+      );
+      if (!folderExists) {
+        throw new Error(
+          `Monitoring location folder not found: ${location.dropboxPath}`
+        );
+      }
+
+      const fetchedImages = await dropboxService.getLocationImages(
+        location.dropboxPath,
+        imageCount,
+        dateRange
+      );
+
+      setImages(fetchedImages);
+    } catch (err) {
+      console.error("Error loading images:", err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchImages();
+  }, [location, imageCount, dateRange]);
+
+  const formatDate = (date) => {
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date);
+  };
+
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return "0 Bytes";
+    const k = 1024;
+    const sizes = ["Bytes", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
+        {/* Header */}
+        <div className="p-6 border-b border-gray-200">
+          <div className="flex justify-between items-start">
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900">
+                {location.name}
+              </h2>
+              <p className="text-sm text-gray-600 mt-1">
+                {location.description}
+              </p>
+              <div className="flex items-center gap-4 mt-2">
+                <span
+                  className={`px-3 py-1 rounded-full text-sm font-medium ${
+                    location.frequency === "high"
+                      ? "bg-red-100 text-red-800"
+                      : location.frequency === "medium"
+                      ? "bg-yellow-100 text-yellow-800"
+                      : "bg-green-100 text-green-800"
+                  }`}
+                >
+                  {location.frequency.toUpperCase()} ACTIVITY
+                </span>
+                <span className="text-sm text-gray-600">
+                  Path: {location.dropboxPath}
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-gray-600 text-2xl font-bold w-8 h-8 flex items-center justify-center"
+            >
+              ×
+            </button>
+          </div>
+
+          {/* Filters */}
+          <div className="flex gap-4 mt-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Number of Images
+              </label>
+              <select
+                value={imageCount}
+                onChange={(e) => setImageCount(Number(e.target.value))}
+                className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value={5}>5 images</option>
+                <option value={10}>10 images</option>
+                <option value={20}>20 images</option>
+                <option value={50}>50 images</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Date Range
+              </label>
+              <select
+                value={dateRange}
+                onChange={(e) => setDateRange(Number(e.target.value))}
+                className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value={1}>Last 24 hours</option>
+                <option value={7}>Last 7 days</option>
+                <option value={30}>Last 30 days</option>
+                <option value={90}>Last 90 days</option>
+              </select>
+            </div>
+            <button
+              onClick={fetchImages}
+              disabled={loading}
+              className="self-end px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+            >
+              {loading ? "Loading..." : "Refresh"}
+            </button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {loading ? (
+            <div className="flex justify-center items-center h-64">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mx-auto mb-4"></div>
+                <p className="text-gray-600">Loading images from Dropbox...</p>
+              </div>
+            </div>
+          ) : error ? (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+              <div className="flex items-center">
+                <svg
+                  className="w-5 h-5 mr-2"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+                <div>
+                  <p className="font-medium">Error loading images</p>
+                  <p className="text-sm">{error}</p>
+                </div>
+              </div>
+            </div>
+          ) : images.length === 0 ? (
+            <div className="text-center py-16 bg-gray-50 rounded-lg">
+              <svg
+                className="w-16 h-16 mx-auto mb-4 text-gray-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1}
+                  d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                />
+              </svg>
+              <p className="text-xl text-gray-600">No images found</p>
+              <p className="text-sm text-gray-500 mt-2">
+                No predator sightings in the selected time range
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="mb-4 text-sm text-gray-600">
+                Found {images.length} image{images.length !== 1 ? "s" : ""} in
+                the last {dateRange} day{dateRange !== 1 ? "s" : ""}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {images.map((image, index) => (
+                  <div
+                    key={image.id || index}
+                    className="bg-gray-50 rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow"
+                  >
+                    <div className="relative">
+                      <img
+                        src={image.url}
+                        alt={image.name}
+                        className="w-full h-48 object-cover"
+                        onError={(e) => {
+                          e.target.style.display = "none";
+                          e.target.nextSibling.style.display = "flex";
+                        }}
+                      />
+                      <div className="hidden w-full h-48 bg-gray-200 items-center justify-center">
+                        <span className="text-gray-500">Failed to load</span>
+                      </div>
+                      <div className="absolute top-2 right-2 bg-black bg-opacity-60 text-white text-xs px-2 py-1 rounded">
+                        {formatDate(image.modified)}
+                      </div>
+                    </div>
+                    <div className="p-3">
+                      <p
+                        className="text-sm font-medium text-gray-900 truncate"
+                        title={image.name}
+                      >
+                        {image.name}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {formatFileSize(image.size)}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Main App Component
+const App = () => {
+  const [selectedLocation, setSelectedLocation] = useState(null);
+  const [darkMode, setDarkMode] = useState(false);
+  const [locationStats, setLocationStats] = useState({});
+  const [dropboxService] = useState(() => new DropboxService());
+
+  // Load location statistics on mount
+  useEffect(() => {
+    const loadLocationStats = async () => {
+      const stats = {};
+
+      for (const location of MONITORING_LOCATIONS) {
+        try {
+          const recentImages = await dropboxService.getLocationImages(
+            location.dropboxPath,
+            50,
+            7
+          );
+          stats[location.id] = {
+            recentImages: recentImages.length,
+            lastActivity:
+              recentImages.length > 0 ? recentImages[0].modified : null,
+          };
+        } catch (error) {
+          console.log(
+            `Could not load stats for ${location.name}:`,
+            error.message
+          );
+          stats[location.id] = {
+            recentImages: 0,
+            lastActivity: null,
+          };
+        }
+      }
+
+      setLocationStats(stats);
+    };
+
+    loadLocationStats();
+  }, []);
+
+  const toggleDarkMode = () => {
+    setDarkMode(!darkMode);
+  };
+
+  const getLocationFrequency = (locationId) => {
+    const stats = locationStats[locationId];
+    if (!stats) return "unknown";
+
+    const { recentImages } = stats;
+    if (recentImages >= 10) return "high";
+    if (recentImages >= 5) return "medium";
+    return "low";
+  };
+
+  return (
+    <div
+      className={`min-h-screen ${
+        darkMode ? "bg-gray-900 text-white" : "bg-gray-50 text-gray-900"
+      }`}
+    >
+      {/* Header */}
+      <header className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
+            <div className="flex items-center">
+              <div className="flex-shrink-0">
+                <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                  🐾 Predator Sighting Monitor
+                </h1>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2 text-sm">
+                <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                <span>High (10+ recent)</span>
+                <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                <span>Medium (5-9)</span>
+                <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                <span>Low (&lt;5)</span>
+              </div>
+
+              <button
+                onClick={toggleDarkMode}
+                className="p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700"
+              >
+                {darkMode ? "☀️" : "🌙"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="flex-1">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+          <div className="mb-6">
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+              Wildlife Monitoring Locations
+            </h2>
+            <p className="mt-2 text-gray-600 dark:text-gray-300">
+              Real-time monitoring of predator activity. Click any location to
+              view recent camera captures from Dropbox.
+            </p>
+          </div>
+
+          {/* Map Container */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm overflow-hidden">
+            <div style={{ height: "600px", width: "100%" }}>
+              <MapContainer
+                center={[-33.9249, 18.4241]}
+                zoom={12}
+                style={{ height: "100%", width: "100%" }}
+              >
+                <TileLayer
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                />
+
+                {MONITORING_LOCATIONS.map((location) => {
+                  const frequency = getLocationFrequency(location.id);
+                  const stats = locationStats[location.id];
+
+                  return (
+                    <Marker
+                      key={location.id}
+                      position={location.coordinates}
+                      icon={createCustomIcon(frequency)}
+                      eventHandlers={{
+                        click: () => setSelectedLocation(location),
+                      }}
+                    >
+                      <Popup>
+                        <div className="text-center min-w-48">
+                          <h3 className="font-semibold text-lg">
+                            {location.name}
+                          </h3>
+                          <p className="text-sm text-gray-600 mb-2">
+                            {location.description}
+                          </p>
+                          <div className="space-y-1">
+                            <p className="text-sm">
+                              Activity:{" "}
+                              <span
+                                className={`font-medium ${
+                                  frequency === "high"
+                                    ? "text-red-600"
+                                    : frequency === "medium"
+                                    ? "text-yellow-600"
+                                    : frequency === "low"
+                                    ? "text-green-600"
+                                    : "text-gray-600"
+                                }`}
+                              >
+                                {frequency}
+                              </span>
+                            </p>
+                            {stats && (
+                              <>
+                                <p className="text-xs text-gray-500">
+                                  Recent images: {stats.recentImages}
+                                </p>
+                                {stats.lastActivity && (
+                                  <p className="text-xs text-gray-500">
+                                    Last:{" "}
+                                    {new Intl.DateTimeFormat("en-US", {
+                                      month: "short",
+                                      day: "numeric",
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    }).format(stats.lastActivity)}
+                                  </p>
+                                )}
+                              </>
+                            )}
+                          </div>
+                          <p className="text-xs text-blue-600 mt-2 font-medium">
+                            Click marker to view images
+                          </p>
+                        </div>
+                      </Popup>
+                    </Marker>
+                  );
+                })}
+              </MapContainer>
+            </div>
+          </div>
+
+          {/* Stats Summary */}
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-4 gap-6">
+            <div className="bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg">
+              <div className="p-5">
+                <div className="flex items-center">
+                  <div className="flex-shrink-0">
+                    <div className="w-8 h-8 bg-blue-100 rounded-md flex items-center justify-center">
+                      <span className="text-lg">📍</span>
+                    </div>
+                  </div>
+                  <div className="ml-5 w-0 flex-1">
+                    <dl>
+                      <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
+                        Active Locations
+                      </dt>
+                      <dd className="text-lg font-medium text-gray-900 dark:text-white">
+                        {MONITORING_LOCATIONS.length}
+                      </dd>
+                    </dl>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg">
+              <div className="p-5">
+                <div className="flex items-center">
+                  <div className="flex-shrink-0">
+                    <div className="w-8 h-8 bg-red-100 rounded-md flex items-center justify-center">
+                      <div className="w-4 h-4 bg-red-500 rounded-full"></div>
+                    </div>
+                  </div>
+                  <div className="ml-5 w-0 flex-1">
+                    <dl>
+                      <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
+                        High Activity
+                      </dt>
+                      <dd className="text-lg font-medium text-gray-900 dark:text-white">
+                        {
+                          Object.values(locationStats).filter(
+                            (stats) => stats && stats.recentImages >= 10
+                          ).length
+                        }
+                      </dd>
+                    </dl>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg">
+              <div className="p-5">
+                <div className="flex items-center">
+                  <div className="flex-shrink-0">
+                    <div className="w-8 h-8 bg-yellow-100 rounded-md flex items-center justify-center">
+                      <div className="w-4 h-4 bg-yellow-500 rounded-full"></div>
+                    </div>
+                  </div>
+                  <div className="ml-5 w-0 flex-1">
+                    <dl>
+                      <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
+                        Medium Activity
+                      </dt>
+                      <dd className="text-lg font-medium text-gray-900 dark:text-white">
+                        {
+                          Object.values(locationStats).filter(
+                            (stats) =>
+                              stats &&
+                              stats.recentImages >= 5 &&
+                              stats.recentImages < 10
+                          ).length
+                        }
+                      </dd>
+                    </dl>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg">
+              <div className="p-5">
+                <div className="flex items-center">
+                  <div className="flex-shrink-0">
+                    <div className="w-8 h-8 bg-green-100 rounded-md flex items-center justify-center">
+                      <div className="w-4 h-4 bg-green-500 rounded-full"></div>
+                    </div>
+                  </div>
+                  <div className="ml-5 w-0 flex-1">
+                    <dl>
+                      <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
+                        Low Activity
+                      </dt>
+                      <dd className="text-lg font-medium text-gray-900 dark:text-white">
+                        {
+                          Object.values(locationStats).filter(
+                            (stats) => stats && stats.recentImages < 5
+                          ).length
+                        }
+                      </dd>
+                    </dl>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Recent Activity Feed */}
+          <div className="mt-8">
+            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">
+              Recent Activity Summary
+            </h3>
+            <div className="bg-white dark:bg-gray-800 shadow rounded-lg overflow-hidden">
+              <ul className="divide-y divide-gray-200 dark:divide-gray-700">
+                {MONITORING_LOCATIONS.map((location) => {
+                  const stats = locationStats[location.id];
+                  const frequency = getLocationFrequency(location.id);
+
+                  return (
+                    <li key={location.id} className="px-6 py-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center">
+                          <div
+                            className={`w-3 h-3 rounded-full mr-3 ${
+                              frequency === "high"
+                                ? "bg-red-500"
+                                : frequency === "medium"
+                                ? "bg-yellow-500"
+                                : frequency === "low"
+                                ? "bg-green-500"
+                                : "bg-gray-400"
+                            }`}
+                          ></div>
+                          <div>
+                            <p className="text-sm font-medium text-gray-900 dark:text-white">
+                              {location.name}
+                            </p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">
+                              {location.description}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          {stats ? (
+                            <>
+                              <p className="text-sm font-medium text-gray-900 dark:text-white">
+                                {stats.recentImages} recent captures
+                              </p>
+                              {stats.lastActivity && (
+                                <p className="text-sm text-gray-500 dark:text-gray-400">
+                                  Last:{" "}
+                                  {new Intl.DateTimeFormat("en-US", {
+                                    month: "short",
+                                    day: "numeric",
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  }).format(stats.lastActivity)}
+                                </p>
+                              )}
+                            </>
+                          ) : (
+                            <p className="text-sm text-gray-500 dark:text-gray-400">
+                              Loading...
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          </div>
+
+          {/* Instructions */}
+          <div className="mt-8 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-6">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <svg
+                  className="h-5 w-5 text-blue-400"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                  How to Use This System
+                </h3>
+                <div className="mt-2 text-sm text-blue-700 dark:text-blue-300">
+                  <ul className="list-disc pl-5 space-y-1">
+                    <li>
+                      Click on any camera location marker to view recent
+                      predator sightings
+                    </li>
+                    <li>
+                      Red markers indicate high activity (10+ recent captures)
+                    </li>
+                    <li>Yellow markers show medium activity (5-9 captures)</li>
+                    <li>
+                      Green markers represent low activity (less than 5
+                      captures)
+                    </li>
+                    <li>
+                      Use the filters in the image gallery to adjust date range
+                      and number of images
+                    </li>
+                    <li>
+                      All images are loaded directly from your Dropbox storage
+                      in real-time
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      {/* Image Gallery Modal */}
+      {selectedLocation && (
+        <ImageGallery
+          location={selectedLocation}
+          onClose={() => setSelectedLocation(null)}
+        />
+      )}
+    </div>
+  );
+};
+
+export default App;
